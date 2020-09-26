@@ -1,0 +1,11 @@
+krunner
+
+klipper
+ - for clipboard handling through dbus
+
+python3
+python3 dbus ??
+python3 glib ??
+python3-secretstorage
+	sudo aptitude install python3-secretstorage
+
