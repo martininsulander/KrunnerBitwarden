@@ -1,0 +1,12 @@
+I couldn't make dbus activiation for user session, but it is an interesting idea
+
+martinin@HIQGBGL0397 ~/.dbus/services cat mi.secretservice.krunner.service 
+[D-BUS Service]
+Name=mi.secretservice.krunner
+Exec=python3 krunner.py
+Path=/home/martinin/.local/share/krunner/plugin/miSecretService/
+
+
+
+
+
