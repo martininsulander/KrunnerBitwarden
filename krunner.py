@@ -14,7 +14,6 @@ from gi.repository import GLib
 import secret
 import clipboard
 
-logging.basicConfig(level=logging.INFO)
 log_init = logging.getLogger('init')
 log_search = logging.getLogger('search')
 log_secret = logging.getLogger('secret')
@@ -124,7 +123,7 @@ class Runner(dbus.service.Object):
             # 6 properties - dict {subtext: category and urls}
             out.append((
                 match.path, label, ICON, 100, 0.5, {'subtext': attrvals,},))
-            log_search.debug('matched %s %s', text, match.path)
+            log_search.debug('matched %f %s', match.prio, text)#, match.path)
         return out
 
     @dbus.service.method(IFACE, out_signature='a(sss)')
@@ -157,4 +156,3 @@ class Runner(dbus.service.Object):
                 GLib.source_remove(self.clear_clipboard_timer)
             self.clear_clipboard_timer = GLib.timeout_add_seconds(CLIPBOARD_TIMEOUT,
                                                                   self.clear_clipboard)
-

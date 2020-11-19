@@ -8,7 +8,7 @@ search -> to find matching items (in Match tuple)
 get_secret -> get password from item dbus path
 
 probably
-	org.freedesktop.Secret.Service 
+	org.freedesktop.Secret.Service
 		OpenSession('plain', input GLib.Variant?)
 	-> arg_0, path path != '/' on success
        raise org.freedesktop.DBus.Error.NotSupported
@@ -30,12 +30,9 @@ secretstorage
 """
 import logging
 import difflib  # for comparing strings
-from typing import List, NamedTuple, Tuple, Dict, Union, Optional
-from collections import namedtuple
 from contextlib import closing
 from secretstorage import dbus_init, Item, get_all_collections
 from secretstorage.exceptions import SecretServiceNotAvailableException
-import time
 
 log_search = logging.getLogger('search')
 log_secret = logging.getLogger('secret')
@@ -60,17 +57,21 @@ def get_collections(unlock=False, connection=None):
     collections = []
     if not connection:
         connection = dbus_init()
-    for col in get_all_collections(connection):
+    count = 0
+    for count, col in enumerate(get_all_collections(connection)):
         if col.is_locked():
             if not unlock:
                 continue
-            elif col.unlock():
+            if col.unlock():
                 # failed to unlock
                 log_secret.warning('Failed to unlock %s', col.collection_path)
                 continue
         collections.append(col)
     if not connection:
         connection.close()
+        log_secret.debug("No dbus connection for getting collections")
+    else:
+        log_secret.debug('Found %d collections', count)
     return collections
 
 
@@ -111,7 +112,7 @@ def search(terms: List[Term], search_term: str) -> List[PathPrioMatches]:
     matches: List[PathPrioMatches] = []
 
     if search_term.islower():
-        strfix = lambda s: s.lower() 
+        strfix = lambda s: s.lower()
     else:
         strfix = lambda s: s
 
@@ -151,16 +152,16 @@ def get_secret(item_path: str) -> Optional[str]:
 def test():
     "run a test search"
     terms = get_terms(['Path'])
-    for path, matches in search(terms, 'martin').items():
+    for match in search(terms, 'martin'):
         label = None
         attvals: List[Tuple[str, str]] = []
-        for match in matches:
-            assert not label or label == match.label
-            label = match.label
-            attvals.append((match.attr, match.value,))
+        for term in match.terms:
+            assert not label or label == term.label
+            label = term.label
+            attvals.append((term.attr, term.value,))
         attvals_str = ', '.join(['%s:%s' % (a, v) for a, v in attvals])
-        print(label, attvals_str, path)
-        print(get_secret(path))
+        print(label, attvals_str, match.path)
+        #print(get_secret(match.path))
 
 
 if __name__ == '__main__':
