@@ -28,8 +28,10 @@ secretstorage
         how to check if locked?
         maybe col from path
 """
+import time
 import logging
 import difflib  # for comparing strings
+from typing import List, NamedTuple, Tuple, Optional
 from contextlib import closing
 from secretstorage import dbus_init, Item, get_all_collections
 from secretstorage.exceptions import SecretServiceNotAvailableException
@@ -116,13 +118,19 @@ def search(terms: List[Term], search_term: str) -> List[PathPrioMatches]:
     else:
         strfix = lambda s: s
 
-    diff = difflib.SequenceMatcher(a=search_term)
-    for term in terms:
+    count = 0
+    diff = difflib.SequenceMatcher(a=search_term, autojunk=False)
+    # diff = strsim.NormalizedLevenshtein()
+    for count, term in enumerate(terms):
         for compare_with in [term.label, term.value]:
             diff.set_seq2(strfix(compare_with))
             ratio = diff.quick_ratio()
-            if ratio > 0.3:
-                for match in matching_terms:
+            if ratio < 0.8 and strfix(compare_with).startswith(search_term):
+                ratio = 0.8
+            log_search.debug('ratio %d', ratio)
+            if ratio > 0.4:
+                log_search.debug('text match %f %s', ratio, compare_with)
+                for match in matches:
                     if term.path == match.path:
                         path_match = match
                         break
@@ -132,8 +140,8 @@ def search(terms: List[Term], search_term: str) -> List[PathPrioMatches]:
                 if path_match.prio < ratio:
                     path_match.prio = ratio
                 path_match.terms.append(term)
-
-    return sorted(matches, key=lambda m: m.prio)
+    log_search.debug('compared %d terms', count)
+    return sorted(matches, key=lambda m: m.prio, reverse=True)
 
 
 def get_secret(item_path: str) -> Optional[str]:

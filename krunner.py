@@ -121,8 +121,14 @@ class Runner(dbus.service.Object):
             #   NONE=0 COMPLETION=10 POSSIBLE=30 INFORMATIONAL=50 HELPER=70 COMPLETE=100
             # 5 relevance (0-1) - sort order
             # 6 properties - dict {subtext: category and urls}
+            if match.prio > 0.75:
+                match_type = 100
+            elif match.prio > 0.5:
+                match_type = 70
+            else:
+                match_type = 10
             out.append((
-                match.path, label, ICON, 100, 0.5, {'subtext': attrvals,},))
+                match.path, label, ICON, match_type, match.prio, {'subtext': attrvals,},))
             log_search.debug('matched %f %s', match.prio, text)#, match.path)
         return out
 
