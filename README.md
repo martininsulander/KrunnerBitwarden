@@ -5,7 +5,7 @@ The program is a bridge that connects to krunner and keepassxc.
 It is autostarted by kde.
 
 ## Usage
-To use, write in krunner "pass {three or more letters}" to 
+To use, write in krunner "pass {one or more letters}" to 
 list matching passwords.
 
 ## Install
