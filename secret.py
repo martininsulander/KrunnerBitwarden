@@ -31,13 +31,20 @@ secretstorage
 import time
 import logging
 import difflib  # for comparing strings
-from typing import List, NamedTuple, Tuple, Optional
+from typing import List, NamedTuple, Tuple, Any, Final, Literal, Sequence
 from contextlib import closing
 from secretstorage import dbus_init, Item, get_all_collections
 from secretstorage.exceptions import SecretServiceNotAvailableException
 
 log_search = logging.getLogger('search')
 log_secret = logging.getLogger('secret')
+
+STATUS = Literal['ok',
+                 'Unlock password manager',
+                 'Found no SecretService password manager',]
+STATUS_OK: Final[STATUS] = 'ok'
+STATUS_LOCKED: Final[STATUS] = 'Unlock password manager'
+STATUS_NO_SECRETSERVICE: Final[STATUS] = 'Found no SecretService password manager'
 
 
 class Term(NamedTuple):
@@ -48,42 +55,37 @@ class Term(NamedTuple):
     value: str
 
 
-def unlock_all():
-    "Unlock all collections"
-    log_secret.info('Unlock password manager')
-    get_collections(unlock=True)
-
-
-def get_collections(unlock=False, connection=None):
+def get_collections(connection, unlock=False) -> Tuple[bool, List[Any]]:
     "get all collections, unlock them if requested"
     collections = []
-    if not connection:
-        connection = dbus_init()
     count = 0
+    any_locked_collections = False
     for count, col in enumerate(get_all_collections(connection)):
         if col.is_locked():
             if not unlock:
+                any_locked_collections = True
                 continue
             if col.unlock():
                 # failed to unlock
+                any_locked_collections = True
                 log_secret.warning('Failed to unlock %s', col.collection_path)
                 continue
         collections.append(col)
-    if not connection:
-        connection.close()
-        log_secret.debug("No dbus connection for getting collections")
-    else:
-        log_secret.debug('Found %d collections', count)
-    return collections
+    log_secret.debug('Found %d collections', count)
+    return any_locked_collections, collections
 
 
-def get_terms(exclude_attributes: List[str], unlock=False) -> List[Term]:
+def get_terms(exclude_attributes: Sequence[str], unlock=False
+        ) -> Tuple[STATUS, List[Term]]:
     "get attributes and values to use for searching later"
     log_search.info('Updating search terms')
     terms: List[Term] = []
+    any_locked_collection = False
     try:
         with closing(dbus_init()) as connection:
-            for col in get_collections(connection=connection, unlock=unlock):
+            log_search.error('A')
+            any_locked_collection, collections = get_collections(connection, unlock=unlock)
+            for col in collections:
                 for item in col.get_all_items():
                     for attr, value in item.get_attributes().items():
                         if value and attr not in exclude_attributes:
@@ -95,7 +97,15 @@ def get_terms(exclude_attributes: List[str], unlock=False) -> List[Term]:
                                     value=value))
     except SecretServiceNotAvailableException:
         log_secret.warning('No dbus secretservice provider found')
-    return terms
+    if not terms:
+        if any_locked_collection:
+            log_secret.info('No terms found and some collections where locked')
+            return STATUS_LOCKED, []
+        else:
+            log_secret.warning('No terms found and no unlocked collection,'
+                                ' may be missing passwordmanager')
+            return STATUS_NO_SECRETSERVICE, []
+    return STATUS_OK, terms
 
 
 class PathPrioMatches:
@@ -127,9 +137,8 @@ def search(terms: List[Term], search_term: str) -> List[PathPrioMatches]:
             ratio = diff.quick_ratio()
             if ratio < 0.8 and strfix(compare_with).startswith(search_term):
                 ratio = 0.8
-            log_search.debug('ratio %d', ratio)
             if ratio > 0.4:
-                log_search.debug('text match %f %s', ratio, compare_with)
+                log_search.debug('ratio %f, text match %s', ratio, compare_with)
                 for match in matches:
                     if term.path == match.path:
                         path_match = match
@@ -140,27 +149,32 @@ def search(terms: List[Term], search_term: str) -> List[PathPrioMatches]:
                 if path_match.prio < ratio:
                     path_match.prio = ratio
                 path_match.terms.append(term)
+            elif ratio > 0:
+                log_search.debug('ratio %f', ratio)
     log_search.debug('compared %d terms', count)
     return sorted(matches, key=lambda m: m.prio, reverse=True)
 
 
-def get_secret(item_path: str) -> Optional[str]:
+def get_secret(item_path: str) -> Tuple[STATUS, bytes]:
     "fetch secret from dbus item path"
     log_secret.debug('Get secret for %s', item_path)
     try:
         with closing(dbus_init()) as connection:
             time.sleep(0.2)  # sometimes needed for items to be populated after unlock
             item = Item(connection, item_path)
-            return item.get_secret()
+            return STATUS_OK, item.get_secret()
     except SecretServiceNotAvailableException:
         log_secret.error('The dbus secretservice provider is not running any more')
-        return None
+        return STATUS_NO_SECRETSERVICE, b''
 
 
 def test():
     "run a test search"
-    terms = get_terms(['Path'])
-    for match in search(terms, 'martin'):
+    status, terms = get_terms(['Path'], unlock=True)
+    print(status)
+    for count, match in enumerate(search(terms, 'martin')):
+        if count > 4:
+            break
         label = None
         attvals: List[Tuple[str, str]] = []
         for term in match.terms:

@@ -2,7 +2,7 @@
 from typing import List, NamedTuple, Tuple, Dict
 import logging
 
-import dbus
+import dbus  # type: ignore
 
 log_clip = logging.getLogger('clipboard')
 

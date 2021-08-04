@@ -6,13 +6,14 @@ Krunner dbus service to access secretservice enabled password managers.
 import logging
 from typing import List, Tuple, Dict
 
-import dbus.service
+import dbus.service  # type: ignore
 
-from dbus.mainloop.glib import DBusGMainLoop
-from gi.repository import GLib
+from dbus.mainloop.glib import DBusGMainLoop  # type: ignore
+from gi.repository import GLib  # type: ignore
 
 import secret
 import clipboard
+from secret import (Term, STATUS, STATUS_OK, STATUS_LOCKED,)
 
 log_init = logging.getLogger('init')
 log_search = logging.getLogger('search')
@@ -35,8 +36,7 @@ MAX_NR_OF_MATCHES = 4
 
 ICON = 'changes-allow-symbolic'
 
-UNLOCK = '_UNLOCK_'
-
+log_init.info('Setting up Krunner plugin')
 
 class Runner(dbus.service.Object):
     """Krunner dbus service to query secretservice"""
@@ -46,7 +46,7 @@ class Runner(dbus.service.Object):
                                      object_path=OBJPATH)
         self.refresh_timer = None
         self.clear_clipboard_timer = None
-        self.terms = None
+        self.terms: List[Term] = []
         self.update_terms(unlock=False)
 
 
@@ -58,48 +58,48 @@ class Runner(dbus.service.Object):
 
     def refresh_timeout(self):
         "Clear terms refresh timer on timeout"
-        log_search.info('terms are old, try to refresh next time')
+        log_search.info('terms are old, refresh next time')
         self.refresh_timer = None
 
 
-    def update_terms(self, unlock=False):
+    def update_terms(self, unlock=False) -> STATUS:
         "fetch and store possible search terms from secretservice provider"
-        if self.refresh_timer is not None:
-            GLib.source_remove(self.refresh_timer)
-        else:
-            updated_terms = secret.get_terms(EXCLUDE_ATTRIBUTES, unlock=unlock)
-            if updated_terms:
-                self.terms = updated_terms
-            else:
-                if not unlock:
-                    log_search.warning('Not updated, locked')
-                    return
-                log_search.error('Cannot unlock and fetch terms')
-                log_search.error('maybe no active secretservice password manager enabled')
-                # add timer to not strain service in case of errors
-        self.refresh_timer = GLib.timeout_add_seconds(REFRESH_TERMS_TIMEOUT, self.refresh_timeout)
+        log_search.error('bbb %s', self.refresh_timer)
+        if not self.terms or not self.refresh_timer:
+            status, self.terms = secret.get_terms(EXCLUDE_ATTRIBUTES, unlock=unlock)
+            if self.refresh_timer:
+                GLib.source_remove(self.refresh_timer)
+            self.refresh_timer = GLib.timeout_add_seconds(REFRESH_TERMS_TIMEOUT, self.refresh_timeout)
+        return status
 
 
     @dbus.service.method(IFACE, in_signature='s', out_signature='a(sssida{sv})')
-    def Match(self, query: str):
-        """Search for query in terms and respond with matches to display in krunner"""
-        if len(query) < len(TRIGGER) + 3:  #  pass 123 at least three characters before querying
-            return []
+    def Match(self, query: str) -> List[Tuple[str, str, str, int, float, Dict[str, str]]]:
+        """Search for query in terms and respond with matches to display in krunner
+
+        Main krunner-method for showing results and errors:
+        * no secretservice password manager
+        * unlock password manager
+        * show matching entries"""
+
+        # wait until matching the trigger word
         if not query.startswith(TRIGGER):
             return []
-
-        if not self.terms:
-            log_search.info('Ask for unlock')
-            return [(UNLOCK, 'Unlock password manager', ICON, 80, 1, {},)]
 
         query = query[len(TRIGGER):].strip()
         if not query:
             return []
 
-        self.update_terms(unlock=False)
+        log_search.debug('Match query: %s', query)
 
-        if not self.terms:
-            return [('', 'No password manager found', ICON, 10, 0.1, {},)]
+        # try to update terms if terms list is empty or old
+        if not self.terms or self.refresh_timer is None:
+            status: STATUS = self.update_terms(unlock=False)
+            if status == STATUS_LOCKED:
+                return [(STATUS_LOCKED, STATUS_LOCKED, ICON, 80, 1, {},)]
+            elif status is not STATUS_OK:
+                log_search.warning('Unhandled status[%s], try to unlock anyway', status)
+                return [(STATUS_LOCKED, status, ICON, 10, 0.1, {},)]
 
         match: secret.PathPrioMatches
         out: List[Tuple[str, str, str, int, float, Dict[str, str]]] = []
@@ -151,10 +151,9 @@ class Runner(dbus.service.Object):
     def Run(self, data: str, action_id: str):
         "Run an action, action_id is empty for default action"
         log_secret.debug('activate %s (%s)', data, action_id)
-        if data == UNLOCK:
+        if data == STATUS_LOCKED:
             self.update_terms(unlock=True)
         else:
-            secret.unlock_all()
             password = secret.get_secret(item_path=data)
             clipboard.put(password)
 
