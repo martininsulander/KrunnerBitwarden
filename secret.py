@@ -83,7 +83,6 @@ def get_terms(exclude_attributes: Sequence[str], unlock=False
     any_locked_collection = False
     try:
         with closing(dbus_init()) as connection:
-            log_search.error('A')
             any_locked_collection, collections = get_collections(connection, unlock=unlock)
             for col in collections:
                 for item in col.get_all_items():
@@ -163,6 +162,9 @@ def get_secret(item_path: str) -> Tuple[STATUS, bytes]:
             time.sleep(0.2)  # sometimes needed for items to be populated after unlock
             item = Item(connection, item_path)
             return STATUS_OK, item.get_secret()
+    except UnicodeDecodeError:
+        log_secret.error('Password cannot be read as UTF-8')
+        return STATUS_OK, b''
     except SecretServiceNotAvailableException:
         log_secret.error('The dbus secretservice provider is not running any more')
         return STATUS_NO_SECRETSERVICE, b''

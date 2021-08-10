@@ -64,7 +64,6 @@ class Runner(dbus.service.Object):
 
     def update_terms(self, unlock=False) -> STATUS:
         "fetch and store possible search terms from secretservice provider"
-        log_search.error('bbb %s', self.refresh_timer)
         if not self.terms or not self.refresh_timer:
             status, self.terms = secret.get_terms(EXCLUDE_ATTRIBUTES, unlock=unlock)
             if self.refresh_timer:
@@ -154,8 +153,9 @@ class Runner(dbus.service.Object):
         if data == STATUS_LOCKED:
             self.update_terms(unlock=True)
         else:
-            password = secret.get_secret(item_path=data)
-            clipboard.put(password)
+            status, password = secret.get_secret(item_path=data)
+            if status is STATUS_OK:
+                clipboard.put(password)
 
             if self.clear_clipboard_timer is not None:
                 GLib.source_remove(self.clear_clipboard_timer)
