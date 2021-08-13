@@ -119,6 +119,7 @@ class PathPrioMatches:
 def search(terms: List[Term], search_term: str) -> List[PathPrioMatches]:
     "search for a term in prefetched list"
     log_search.debug('Search term: %s', search_term)
+    log_ratio = log_search.getChild('ratio')
 
     matches: List[PathPrioMatches] = []
 
@@ -137,7 +138,7 @@ def search(terms: List[Term], search_term: str) -> List[PathPrioMatches]:
             if ratio < 0.8 and strfix(compare_with).startswith(search_term):
                 ratio = 0.8
             if ratio > 0.4:
-                log_search.debug('ratio %f, text match %s', ratio, compare_with)
+                log_ratio.debug('%f, text match %s', ratio, compare_with)
                 for match in matches:
                     if term.path == match.path:
                         path_match = match
@@ -149,7 +150,7 @@ def search(terms: List[Term], search_term: str) -> List[PathPrioMatches]:
                     path_match.prio = ratio
                 path_match.terms.append(term)
             elif ratio > 0:
-                log_search.debug('ratio %f', ratio)
+                log_ratio.debug('%f', ratio)
     log_search.debug('compared %d terms', count)
     return sorted(matches, key=lambda m: m.prio, reverse=True)
 
