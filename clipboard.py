@@ -21,6 +21,6 @@ def clear():
     log_clip.debug('clipboard cleared from klipper')
 
 def put(text: bytes):
-    log_clip.info('put password')
+    log_clip.info('put text to clipboard')
     klipper().setClipboardContents(text, dbus_interface=KLIPPER_IFACE)
-    log_clip.debug('password put to klipper')
+    log_clip.debug('text put to klipper')

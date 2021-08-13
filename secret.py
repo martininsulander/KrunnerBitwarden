@@ -45,6 +45,7 @@ STATUS = Literal['ok',
 STATUS_OK: Final[STATUS] = 'ok'
 STATUS_LOCKED: Final[STATUS] = 'Unlock password manager'
 STATUS_NO_SECRETSERVICE: Final[STATUS] = 'Found no SecretService password manager'
+STATUS_NO_USERNAME = 'No username'
 
 
 class Term(NamedTuple):
@@ -163,9 +164,22 @@ def get_secret(item_path: str) -> Tuple[STATUS, bytes]:
             time.sleep(0.2)  # sometimes needed for items to be populated after unlock
             item = Item(connection, item_path)
             return STATUS_OK, item.get_secret()
-    except UnicodeDecodeError:
-        log_secret.error('Password cannot be read as UTF-8')
-        return STATUS_OK, b''
+    except SecretServiceNotAvailableException:
+        log_secret.error('The dbus secretservice provider is not running any more')
+        return STATUS_NO_SECRETSERVICE, b''
+
+
+def get_username(item_path: str) -> Tuple[STATUS, bytes]:
+    "fetch usernmame from dbus item path"
+    log_secret.debug('Get username for %s', item_path)
+    try:
+        with closing(dbus_init()) as connection:
+            time.sleep(0.2)  # sometimes needed for items to be populated after unlock
+            item = Item(connection, item_path)
+            attribs = item.get_attributes()
+            if 'UserName' not in attribs:
+                return STATUS_NO_USERNAME, b''
+            return STATUS_OK, attribs['UserName']
     except SecretServiceNotAvailableException:
         log_secret.error('The dbus secretservice provider is not running any more')
         return STATUS_NO_SECRETSERVICE, b''

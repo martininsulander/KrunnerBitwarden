@@ -34,6 +34,8 @@ EXCLUDE_ATTRIBUTES = ('Path', 'Notes', 'Title', 'Uuid')  # don't query these ite
 
 MAX_NR_OF_MATCHES = 4
 
+ACTION_2 = 'trigger_shift_alternative'  # shift+enter or icon
+
 ICON = 'changes-allow-symbolic'
 
 log_init.info('Setting up Krunner plugin')
@@ -133,13 +135,15 @@ class Runner(dbus.service.Object):
 
     @dbus.service.method(IFACE, out_signature='a(sss)')
     def Actions(self):
-        "Description of actions available"
-        # TODO where is this shown?
-        # id description icon
+        "Setup alternative actions"
+        # action-id description icon
+        # runs at first query
+        # log_search.debug('Actions triggered')
         return [(
-            APPNAME,
-            "Copy passwords to clipboard (from secret service enabled application)",
+            ACTION_2,
+            "Copy username",
             ICON)]
+            # (ACTION3, "possible with more alternatives, but without kbd shortcut")
 
     def clear_clipboard(self):
         "Clear clipboard and clipboard timer on timeout"
@@ -148,16 +152,25 @@ class Runner(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature='ss')
     def Run(self, data: str, action_id: str):
-        "Run an action, action_id is empty for default action"
+        """Run an action
+        
+        action_id is empty for default action,
+        ACTION_2 for second action"""
         log_secret.debug('activate %s (%s)', data, action_id)
+
+        # new action so reset timer. TODO: clear ev password entry
+        if self.clear_clipboard_timer is not None:
+            GLib.source_remove(self.clear_clipboard_timer)
+
         if data == STATUS_LOCKED:
             self.update_terms(unlock=True)
+        elif action_id == ACTION_2:
+            status, username = secret.get_username(item_path=data)
+            if status is STATUS_OK:
+                clipboard.put(username)
         else:
             status, password = secret.get_secret(item_path=data)
             if status is STATUS_OK:
                 clipboard.put(password)
-
-            if self.clear_clipboard_timer is not None:
-                GLib.source_remove(self.clear_clipboard_timer)
             self.clear_clipboard_timer = GLib.timeout_add_seconds(CLIPBOARD_TIMEOUT,
                                                                   self.clear_clipboard)
