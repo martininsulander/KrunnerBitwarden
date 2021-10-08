@@ -1,15 +1,15 @@
 [Desktop Entry]
-Name=Secret Service
-Comment=Lookup and copy passwords to clipboard from any secretservice enabled password manager
+Name=Bitwarden passwords
+Comment=Lookup and copy passwords to clipboard from bitwarden bwcli password manager
 X-KDE-ServiceTypes=Plasma/Runner
 Type=Service
 Icon=changes-allow-symbolic
 X-KDE-PluginInfo-Author=Martin Insulander
 X-KDE-PluginInfo-Email=martin+projekt@insulander.info
-X-KDE-PluginInfo-Name=mi_secretservice_krunner
+X-KDE-PluginInfo-Name=mi_bitwarden_krunner
 X-KDE-PluginInfo-Version=0.1
 X-KDE-PluginInfo-License=LGPL
 X-KDE-PluginInfo-EnabledByDefault=true
 X-Plasma-API=DBus
-X-Plasma-DBusRunner-Service=mi.secretservice.krunner
-X-Plasma-DBusRunner-Path=/mi/secretservice/krunner
+X-Plasma-DBusRunner-Service=mi.bitwarden.krunner
+X-Plasma-DBusRunner-Path=/mi/bitwarden/krunner

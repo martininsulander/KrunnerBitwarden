@@ -1,8 +1,16 @@
-# KrunnerSecretService
-Secret Service runner for KDE Plasma Krunner in python
 
-The program is a bridge that connects to krunner and keepassxc.
+# KrunnerBitwarden
+
+A Bitwarden runner for KDE Plasma Krunner in python.
+
+The program is a bridge that connects the bitwarden cli program with krunner.
 It is autostarted by kde.
+
+Until all get their acts together and support a common standard for
+password management (f.ex. https://specifications.freedesktop.org/secret-service/).
+
+If you use f.ex. Keepass, check the krunner
+https://github.com/martininsulander/KrunnerSecretService
 
 ## Usage
 To use, write in krunner "pass {one or more letters}" to 
@@ -11,14 +19,12 @@ list matching passwords.
 ## Install
 Run install.sh to install it locally.
 
-In KeepassXC, check in settings that "Secret Service-integration"
-is activated.
+Make sure you have bitwarden cli installed and runnable as ''bw''.
 
-In Krunner, enable "Secret Service" program.
+In Krunner, enable "Bitwarden" program.
 
 ### Requires
 python3 with the following modules
 
-* secretstorage
 * dbus
 * gi (from Glib)

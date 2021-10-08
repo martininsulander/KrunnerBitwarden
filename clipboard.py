@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-from typing import List, NamedTuple, Tuple, Dict
+from typing import List, NamedTuple, Tuple, Dict, Union
 import logging
 
 import dbus  # type: ignore
@@ -20,7 +20,7 @@ def clear():
     klipper().clearClipboardContents(dbus_interface=KLIPPER_IFACE)
     log_clip.debug('clipboard cleared from klipper')
 
-def put(text: bytes):
+def put(text: Union[str,bytes]):
     log_clip.info('put text to clipboard')
     klipper().setClipboardContents(text, dbus_interface=KLIPPER_IFACE)
     log_clip.debug('text put to klipper')

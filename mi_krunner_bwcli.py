@@ -1,19 +1,20 @@
-#!/bin/env python3
+#!/usr/bin/python3
 """
-Krunner dbus service to access secretservice enabled password managers.
+Krunner dbus service to access bitwarden command line password manager.
 """
 
+import os
 import logging
-from typing import List, Tuple, Dict
-
+from typing import List, Tuple, Dict, overload, Final, Literal
+import json
+import time
 import dbus.service  # type: ignore
 
 from dbus.mainloop.glib import DBusGMainLoop  # type: ignore
 from gi.repository import GLib  # type: ignore
 
-import secret
 import clipboard
-from secret import (Term, STATUS, STATUS_OK, STATUS_LOCKED,)
+from bwcli import Bwcli, Entry
 
 log_init = logging.getLogger('init')
 log_search = logging.getLogger('search')
@@ -22,13 +23,13 @@ log_secret = logging.getLogger('secret')
 
 DBusGMainLoop(set_as_default=True)
 
-APPNAME = 'miSecretserviceKrunner'
-OBJPATH = "/mi/secretservice/krunner"
-BUSNAME = 'mi.secretservice.krunner'
+APPNAME = 'mi_krunner_bwcli'
+OBJPATH = "/mi/bitwarden/krunner"
+BUSNAME = 'mi.bitwarden.krunner'
 IFACE = "org.kde.krunner1"
 
 CLIPBOARD_TIMEOUT = 5  # s before clearing password from clipboard
-REFRESH_TERMS_TIMEOUT = 50  # s before invalidating search terms
+BWCLI_SYNC_TIMEOUT = 600  # 10 min between syncing bwcli
 TRIGGER = 'pass '
 EXCLUDE_ATTRIBUTES = ('Path', 'Notes', 'Title', 'Uuid')  # don't query these item attributes
 
@@ -38,19 +39,30 @@ ACTION_2 = 'trigger_shift_alternative'  # shift+enter or icon
 
 ICON = 'changes-allow-symbolic'
 
+
+STATUS = Literal['ok',
+                 'Unlock password manager',
+                 'Found no SecretService password manager',]
+STATUS_OK: Final[STATUS] = 'ok'
+STATUS_LOCKED: Final[STATUS] = 'Unlock password manager'
+STATUS_NO_SECRETSERVICE: Final[STATUS] = 'Found no SecretService password manager'
+STATUS_NO_USERNAME = 'No username'
+
 log_init.info('Setting up Krunner plugin')
+
+
 
 class Runner(dbus.service.Object):
     """Krunner dbus service to query secretservice"""
+
     def __init__(self):
         dbus.service.Object.__init__(self,
                                      dbus.service.BusName(BUSNAME, dbus.SessionBus()),
                                      object_path=OBJPATH)
-        self.refresh_timer = None
+        self.refresh_timer = None  # used to tell when to sync bw
         self.clear_clipboard_timer = None
-        self.terms: List[Term] = []
-        self.update_terms(unlock=False)
-
+        self.bwcli: Bwcli = Bwcli()
+        log_init.debug('Runner init')
 
     def run(self):
         "Start main loop"
@@ -60,18 +72,10 @@ class Runner(dbus.service.Object):
 
     def refresh_timeout(self):
         "Clear terms refresh timer on timeout"
-        log_search.info('terms are old, refresh next time')
         self.refresh_timer = None
-
-
-    def update_terms(self, unlock=False) -> STATUS:
-        "fetch and store possible search terms from secretservice provider"
-        if not self.terms or not self.refresh_timer:
-            status, self.terms = secret.get_terms(EXCLUDE_ATTRIBUTES, unlock=unlock)
-            if self.refresh_timer:
-                GLib.source_remove(self.refresh_timer)
-            self.refresh_timer = GLib.timeout_add_seconds(REFRESH_TERMS_TIMEOUT, self.refresh_timeout)
-        return status
+        log_search.info('sync bwcli')
+        self.bwcli.sync()
+        self.refresh_timer = GLib.timeout_add_seconds(BWCLI_SYNC_TIMEOUT, self.refresh_timeout)
 
 
     @dbus.service.method(IFACE, in_signature='s', out_signature='a(sssida{sv})')
@@ -87,50 +91,34 @@ class Runner(dbus.service.Object):
         if not query.startswith(TRIGGER):
             return []
 
+        if not self.bwcli.has_session():
+            return [(STATUS_LOCKED, STATUS_LOCKED, ICON, 80, 1, {},)]
+
         query = query[len(TRIGGER):].strip()
         if not query:
             return []
 
         log_search.debug('Match query: %s', query)
 
-        # try to update terms if terms list is empty or old
-        if not self.terms or self.refresh_timer is None:
-            status: STATUS = self.update_terms(unlock=False)
-            if status == STATUS_LOCKED:
-                return [(STATUS_LOCKED, STATUS_LOCKED, ICON, 80, 1, {},)]
-            elif status is not STATUS_OK:
-                log_search.warning('Unhandled status[%s], try to unlock anyway', status)
-                return [(STATUS_LOCKED, status, ICON, 10, 0.1, {},)]
-
-        match: secret.PathPrioMatches
+        entry: Entry
         out: List[Tuple[str, str, str, int, float, Dict[str, str]]] = []
-        for match in secret.search(self.terms, query)[:MAX_NR_OF_MATCHES]:
-            label = None
-            attvals: List[Tuple[str, str]] = []
-            term: secret.Term
-            for term in match.terms:
-                assert not label or label == term.label
-                label = term.label
-                attvals.append((term.attr, term.value,))
-            assert label is not None
-            attrvals = ', '.join(['%s:%s' % (attr, val) for attr, val in attvals])
-            text = label + ' ' + attrvals
-            # 1 data - password
+        for prio, entry in list(self.bwcli.search(query))[:MAX_NR_OF_MATCHES]:
+            # 1 data - username, password - pickled as a list
             # 2 display text - description
             # 3 icon
             # 4 MATCH (Plasma::QueryType)
             #   NONE=0 COMPLETION=10 POSSIBLE=30 INFORMATIONAL=50 HELPER=70 COMPLETE=100
             # 5 relevance (0-1) - sort order
             # 6 properties - dict {subtext: category and urls}
-            if match.prio > 0.75:
+            if prio > 0.75:
                 match_type = 100
-            elif match.prio > 0.5:
+            elif prio > 0.5:
                 match_type = 70
             else:
                 match_type = 10
-            out.append((
-                match.path, label, ICON, match_type, match.prio, {'subtext': attrvals,},))
-            log_search.debug('matched %f %s', match.prio, text)#, match.path)
+            data = json.dumps([entry.username, entry.password])
+            out.append((data, entry.name, ICON, match_type, prio, {'subtext': entry.subtext,},))
+            log_search.debug('matched %f %s %s', prio, entry.name, entry.subtext)#, match.path)
         return out
 
     @dbus.service.method(IFACE, out_signature='a(sss)')
@@ -163,14 +151,24 @@ class Runner(dbus.service.Object):
             GLib.source_remove(self.clear_clipboard_timer)
 
         if data == STATUS_LOCKED:
-            self.update_terms(unlock=True)
-        elif action_id == ACTION_2:
-            status, username = secret.get_username(item_path=data)
-            if status is STATUS_OK:
-                clipboard.put(username)
+            self.bwcli.login()
+
         else:
-            status, password = secret.get_secret(item_path=data)
-            if status is STATUS_OK:
+            username, password = json.loads(data.encode())
+
+            if action_id == ACTION_2:
+                clipboard.put(username)
+            else:
                 clipboard.put(password)
-            self.clear_clipboard_timer = GLib.timeout_add_seconds(CLIPBOARD_TIMEOUT,
-                                                                  self.clear_clipboard)
+                self.clear_clipboard_timer = GLib.timeout_add_seconds(CLIPBOARD_TIMEOUT,
+                                                                    self.clear_clipboard)
+
+
+
+logging.basicConfig(level=logging.INFO)
+for key, value in os.environ.items():
+    if key.startswith('LOG_'):
+        name = key.split('_', 1)[1]
+        logging.getLogger(name).setLevel(value)
+
+Runner().run()
