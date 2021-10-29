@@ -4,26 +4,29 @@ import logging
 from subprocess import run, PIPE
 import json
 import difflib  # for comparing strings
-from typing import Iterable, NamedTuple, Optional, List, Callable, Tuple, Any
-import time
+from typing import Iterable, NamedTuple, Optional, List, Callable, Tuple, Any, Dict, Set, cast
+
 
 log = logging.getLogger('bwcli')
 
 
-class Entry(NamedTuple):
+class Entry:
     """Each entry of a search result"""
-    name: str
-    subtext: str
-    username: str
-    password: str
-
+    def __init__(self, username:str, password:str, name:str, attributes:Set[str]):
+        self.username = username
+        self.password = password
+        self.name = name
+        self.attributes = attributes
+        self.prio: float = 0
+        self.subtext = ''
 
 
 class Bwcli:
     """Connection to bitwarden client
     """
     def __init__(self):
-        self.__session: 'Optional[bytes]' = None
+        self.__session: 'Optional[str]' = None
+        self.cached_names = {}
 
     def login(self):
         "Get session cookie"
@@ -36,6 +39,7 @@ class Bwcli:
             stderr=PIPE)
         if proc.returncode == 0:
             self.__session = proc.stdout
+            self.cache_ids()
             log.info('Logged in to bwcli (session key %s...)', self.__session[:5])
         elif proc.returncode == 127:
             log.error('Bitwarden cli not found')
@@ -45,49 +49,86 @@ class Bwcli:
 
     def sync(self) -> None:
         pass
+    def __call(self, *args: str) -> Optional[Any]:
+        """Call bw and return"""
+        if not self.__session:
+            log.warning('Has no session key, skip searching')
+            return None
+        cmd = ['bw', '--response', '--nointeraction', '--session', self.__session] + list(args)
+        proc = run(cmd, stdout=PIPE, stderr=PIPE)
+        if proc.returncode == 0:
+            return json.loads(proc.stdout)
+        log.error("%s %d", proc.stderr, proc.returncode)
+        self.__session = None
+        return None
+
+    def cache_ids(self):
+        """Cache some id's names; collections and organisations"""
+        for collection in self.__call('list', 'collections'):
+            self.cached_names[collection['id']] = collection['name']
+        for organization in self.__call('list', 'organizations'):
+            self.cached_names[organization['id']] = organization['name']
 
     def has_session(self) -> bool:
         return bool(self.__session)
 
-    def search(self, search_term: str) -> 'Iterable[Tuple[float, Entry]]':
+    def search(self, search_term: str) -> 'Iterable[Entry]':
         """Search for terms, return a list of matches"""
-        session = self.__session
-        if not session:
-            log.warning('Has no session key, skip searching')
-            return
-        log.debug('getting entries from bwcli')
-        proc = run(
-            ["bw", "list", "items", "--search", search_term,
-             "--response", "--nointeraction", "--session", session],
-            stdout=PIPE,
-            stderr=PIPE)
-        if proc.returncode == 0:
-            entries = sort_entries(search_term, self.__parse_search(proc.stdout))
-            yield from entries
+        response = self.__call("list", "items", "--search", search_term)
+        if response:
+            try:
+                data = cast(List[Dict[str, Any]], response["data"]["data"])
+            except KeyError:
+                log.error('response is missing [data][data]', response)
+                return []
+            else:
+                return sort_entries(search_term, self.__parse_search(data))
         else:
-            log.error(proc.stderr, proc.returncode)
-            self.__session = None
+            return []
 
-    def __parse_search(self, result_json:bytes) -> 'Iterable[Entry]':
-        for item in json.loads(result_json)["data"]["data"]:
-            # log.debug(item)
+    def __parse_search(self, items:List[Dict[str, Any]]) -> 'Iterable[Entry]':
+        """
+        {'object': 'item', 'id': 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', 'organizationId': None,
+         'folderId': 'yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy', 'type': 1, 'reprompt': 0,
+         'name': 'git:https://github.com', 'notes': None, 'favorite': False,
+         'fields': [
+                {'name': 'FDO_SECRETS_CONTENT_TYPE', 'value': 'plain/text', 'type': 0},
+                {'name': 'account', 'value': 'martininsulander', 'type': 0},
+                {'name': 'service', 'value': 'git:https://github.com', 'type': 0},
+                {'name': 'xdg:schema', 'value': 'com.microsoft.GitCredentialManager', 'type': 0}],
+         'login': {
+             'uris': [{'match': None, 'uri': 'https://github.com/login'}],  # optional
+             'username': 'my@email', 'password': 'my_password', 'totp': None,
+             'passwordRevisionDate': None}                
+         'collectionIds': [], 'revisionDate': '2021-09-26T10:26:54.736Z'}
+        """
+        for item in items:
             if not "login" in item:
                 continue
             login = item["login"]
             username = login["username"] if "username" in login else ""
             password = login["password"] if "password" in login else ""
-            subtext = ''
-            # TODO fix better subtext by url or other attributes
-            # attrvals = ', '.join(['%s:%s' % (attr, val) for attr, val in attvals])
-            # text = label + ' ' + attrvals
             if not username and not password:
                 continue
+            name = item["name"]
+            attributes: Set[str] = set()
+            attributes.add(item["name"])
+            if 'uris' in login:
+                for uri in login["uris"]:
+                    attributes.add(uri["uri"])
+            for colid in item['collectionIds']:
+                if colid in self.cached_names:
+                    colname = self.cached_names[colid]
+                    attributes.add(colname)
+                    name += ' ' + colname
+            if item['organizationId'] and item['organizationId'] in self.cached_names:
+                attributes.add(self.cached_names[item['organizationId']])
+
             yield Entry(
-                name=item["name"],
+                name = name,
                 username=username,
                 password=password,
-                subtext=subtext)
-
+                attributes=attributes)
 
 
 def priority_term(diff: Any, search_term: str, term: str) -> float:
@@ -98,18 +139,19 @@ def priority_term(diff: Any, search_term: str, term: str) -> float:
     )
 
 
-def priority_entry(diff: Any, search_term: str, entry: Entry, strfix: Callable[[str], str]) -> float:
+def priority_entry(diff: Any, search_term: str, entry: Entry, strfix: Callable[[str], str]) -> None:
     """Find out ratio/priority of an entry"""
-    return max(
-        priority_term(diff, search_term, strfix(entry.username)),
-        priority_term(diff, search_term, strfix(entry.name)),
-        priority_term(diff, search_term, strfix(entry.password)),
-    )
+    r_a: List[Tuple[float, str]] = []
+    for attribute in entry.attributes:
+        r_a.append((priority_term(diff, search_term, strfix(attribute)), attribute,))
+    r_a = sorted(r_a, key=lambda r_a: r_a[0], reverse=True)
+    entry.prio = r_a[0][0]
+    entry.subtext = ' '.join([r_a[1] for r_a in r_a[:3]])
 
 
-def sort_entries(search_term: str, entries: 'Iterable[Entry]') -> List[Tuple[float, Entry]]:
+def sort_entries(search_term: str, entries: 'Iterable[Entry]') -> List[Entry]:
     """Sort entries based on priority"""
-    ratio_entry: 'List[Tuple[float, Entry]]' = []
+    selected_entries: 'List[Entry]' = []
     diff: Any = difflib.SequenceMatcher(a=search_term, autojunk=False)
     if search_term.islower():
         strfix = lambda s: s.lower()
@@ -120,11 +162,11 @@ def sort_entries(search_term: str, entries: 'Iterable[Entry]') -> List[Tuple[flo
 
     count = 0
     for count, entry in enumerate(entries, start=1):
-        prio = priority_entry(diff, search_term, entry, strfix)
-        if prio > 0.4:
-            ratio_entry.append((prio, entry,))
-    log.debug('Accepted %d of %d entries', len(ratio_entry), count)
-    return [r_e for r_e in sorted(ratio_entry, key=lambda r_e: r_e[0], reverse=True)]
+        priority_entry(diff, search_term, entry, strfix)
+        if entry.prio > 0.4:
+            selected_entries.append(entry)
+    log.debug('Accepted %d of %d entries', len(selected_entries), count)
+    return sorted(selected_entries, key=lambda e: e.prio, reverse=True)
 
 
 

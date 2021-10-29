@@ -5,7 +5,7 @@ Krunner dbus service to access bitwarden command line password manager.
 
 import os
 import logging
-from typing import List, Tuple, Dict, overload, Final, Literal
+from typing import List, Tuple, Dict, Final, Literal, Callable, cast, NamedTuple, Optional
 import json
 import time
 import dbus.service  # type: ignore
@@ -29,9 +29,9 @@ BUSNAME = 'mi.bitwarden.krunner'
 IFACE = "org.kde.krunner1"
 
 CLIPBOARD_TIMEOUT = 5  # s before clearing password from clipboard
+LOCK_TIMEOUT = 60*60  # s since last interaction before locking session
 BWCLI_SYNC_TIMEOUT = 600  # 10 min between syncing bwcli
 TRIGGER = 'pass '
-EXCLUDE_ATTRIBUTES = ('Path', 'Notes', 'Title', 'Uuid')  # don't query these item attributes
 
 MAX_NR_OF_MATCHES = 4
 
@@ -48,8 +48,15 @@ STATUS_LOCKED: Final[STATUS] = 'Unlock password manager'
 STATUS_NO_SECRETSERVICE: Final[STATUS] = 'Found no SecretService password manager'
 STATUS_NO_USERNAME = 'No username'
 
-log_init.info('Setting up Krunner plugin')
+MATCH = List[Tuple[str, str, str, int, float, Dict[str, str]]]
+MATCH_CB = Callable[[MATCH], None]
 
+class Waiting(NamedTuple):
+    timer: int
+    query: str
+    cb: MATCH_CB
+
+log_init.info('Setting up Krunner plugin')
 
 
 class Runner(dbus.service.Object):
@@ -59,8 +66,8 @@ class Runner(dbus.service.Object):
         dbus.service.Object.__init__(self,
                                      dbus.service.BusName(BUSNAME, dbus.SessionBus()),
                                      object_path=OBJPATH)
-        self.refresh_timer = None  # used to tell when to sync bw
-        self.clear_clipboard_timer = None
+        self.clear_clipboard_timer: int = None
+        self.wait: Waiting = None
         self.bwcli: Bwcli = Bwcli()
         log_init.debug('Runner init')
 
@@ -77,9 +84,8 @@ class Runner(dbus.service.Object):
         self.bwcli.sync()
         self.refresh_timer = GLib.timeout_add_seconds(BWCLI_SYNC_TIMEOUT, self.refresh_timeout)
 
-
-    @dbus.service.method(IFACE, in_signature='s', out_signature='a(sssida{sv})')
-    def Match(self, query: str) -> List[Tuple[str, str, str, int, float, Dict[str, str]]]:
+    @dbus.service.method(IFACE, in_signature='s', out_signature='a(sssida{sv})', async_callbacks=('ok', '_err',))
+    def Match(self, query: str, ok: MATCH_CB, _err) -> None:
         """Search for query in terms and respond with matches to display in krunner
 
         Main krunner-method for showing results and errors:
@@ -89,20 +95,38 @@ class Runner(dbus.service.Object):
 
         # wait until matching the trigger word
         if not query.startswith(TRIGGER):
-            return []
+            return ok([])
 
         if not self.bwcli.has_session():
-            return [(STATUS_LOCKED, STATUS_LOCKED, ICON, 80, 1, {},)]
+            return ok([(STATUS_LOCKED, STATUS_LOCKED, ICON, 80, 1, {},)])
 
         query = query[len(TRIGGER):].strip()
         if not query:
-            return []
+            return ok([])
 
-        log_search.debug('Match query: %s', query)
+        if self.wait:
+            w = self.wait
+            GLib.source_remove(w.timer)  # stop old timer
+            w.cb([])  # empty response to old query
+        self.wait = Waiting(
+            cast(int, GLib.timeout_add_seconds(BWCLI_CHECK_DELAY, self.search)),
+            query,
+            ok,
+        )
 
-        entry: Entry
-        out: List[Tuple[str, str, str, int, float, Dict[str, str]]] = []
-        for prio, entry in list(self.bwcli.search(query))[:MAX_NR_OF_MATCHES]:
+    def search(self):
+        """Do a search in bitwarden vault
+        query and ok is shared between different match queries
+        """
+        if not self.wait:
+            return  # this timeout is canceled
+        w = self.wait
+        self.wait = None
+
+        log_search.debug('Match query: %s', w.query)
+
+        out: MATCH = []
+        for entry in list(self.bwcli.search(w.query))[:MAX_NR_OF_MATCHES]:
             # 1 data - username, password - pickled as a list
             # 2 display text - description
             # 3 icon
@@ -110,16 +134,20 @@ class Runner(dbus.service.Object):
             #   NONE=0 COMPLETION=10 POSSIBLE=30 INFORMATIONAL=50 HELPER=70 COMPLETE=100
             # 5 relevance (0-1) - sort order
             # 6 properties - dict {subtext: category and urls}
-            if prio > 0.75:
+            if entry.prio > 0.75:
                 match_type = 100
-            elif prio > 0.5:
+            elif entry.prio > 0.5:
                 match_type = 70
             else:
                 match_type = 10
             data = json.dumps([entry.username, entry.password])
-            out.append((data, entry.name, ICON, match_type, prio, {'subtext': entry.subtext,},))
-            log_search.debug('matched %f %s %s', prio, entry.name, entry.subtext)#, match.path)
-        return out
+            out.append((data, entry.name, ICON, match_type, entry.prio, {'subtext': entry.subtext,},))
+            log_search.debug('matched %f %s %s', entry.prio, entry.name, entry.subtext)#, match.path)
+
+        if self.wait:
+            log_search.info('Search discarded, already returned by other match')
+        else:
+            w[2](out)
 
     @dbus.service.method(IFACE, out_signature='a(sss)')
     def Actions(self):
