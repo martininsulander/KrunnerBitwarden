@@ -47,8 +47,6 @@ class Bwcli:
             log.warning('%s %d', proc.stderr, proc.returncode)
             self.__session = None
 
-    def sync(self) -> None:
-        pass
     def __call(self, *args: str) -> Optional[Any]:
         """Call bw and return"""
         if not self.__session:
@@ -68,6 +66,24 @@ class Bwcli:
             self.cached_names[collection['id']] = collection['name']
         for organization in self.__call('list', 'organizations'):
             self.cached_names[organization['id']] = organization['name']
+
+    def sync(self) -> bool:
+        """Call bwcli sync and check result
+            {'success': True, 'data': {'noColor': False, 'object': 'message', 'title': 'Syncing complete.', 'message': None}}
+        """
+        if self.has_session():
+            log.info('sync')
+            response = self.__call('sync')
+            if response and response.get('success', False) == True:
+                return True
+        return False
+
+    def lock(self) -> None:
+        """Call bwcli logout and clear session"""
+        if self.has_session():
+            log.info('lock session')
+            self.__session = None
+            self.__call('lock')
 
     def has_session(self) -> bool:
         return bool(self.__session)

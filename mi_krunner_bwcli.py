@@ -31,6 +31,7 @@ IFACE = "org.kde.krunner1"
 CLIPBOARD_TIMEOUT = 5  # s before clearing password from clipboard
 LOCK_TIMEOUT = 60*60  # s since last interaction before locking session
 BWCLI_SYNC_TIMEOUT = 600  # 10 min between syncing bwcli
+BWCLI_CHECK_DELAY = 0.3  # s delay before checking - to reduce multiple query checks while writing
 TRIGGER = 'pass '
 
 MAX_NR_OF_MATCHES = 4
@@ -66,8 +67,11 @@ class Runner(dbus.service.Object):
         dbus.service.Object.__init__(self,
                                      dbus.service.BusName(BUSNAME, dbus.SessionBus()),
                                      object_path=OBJPATH)
+        self.sync_soon_timer: int = None  # used to tell when to sync bw
         self.clear_clipboard_timer: int = None
+        self.lock_timer: Optional[int] = None
         self.wait: Waiting = None
+        self.last_synced: float = 0
         self.bwcli: Bwcli = Bwcli()
         log_init.debug('Runner init')
 
@@ -76,13 +80,15 @@ class Runner(dbus.service.Object):
         log_init.info('%s service started', APPNAME)
         GLib.MainLoop().run()
 
+    def lock_timeout(self):
+        "Lock bwcli - will require a new login"
+        self.bwcli.lock()
 
-    def refresh_timeout(self):
-        "Clear terms refresh timer on timeout"
-        self.refresh_timer = None
-        log_search.info('sync bwcli')
-        self.bwcli.sync()
-        self.refresh_timer = GLib.timeout_add_seconds(BWCLI_SYNC_TIMEOUT, self.refresh_timeout)
+    def sync_timeout(self):
+        "Run bw sync with any server on timeout"
+        self.sync_soon_timer = None
+        if self.bwcli.sync():
+            self.last_synced = time.time()
 
     @dbus.service.method(IFACE, in_signature='s', out_signature='a(sssida{sv})', async_callbacks=('ok', '_err',))
     def Match(self, query: str, ok: MATCH_CB, _err) -> None:
@@ -93,12 +99,26 @@ class Runner(dbus.service.Object):
         * unlock password manager
         * show matching entries"""
 
+        # reset lock timer
+        if self.lock_timer is not None:
+            GLib.source_remove(self.lock_timer)
+            self.lock_timer = GLib.timeout_add_seconds(LOCK_TIMEOUT, self.lock_timeout)
+            self.lock_timer = None
+
         # wait until matching the trigger word
         if not query.startswith(TRIGGER):
             return ok([])
 
         if not self.bwcli.has_session():
             return ok([(STATUS_LOCKED, STATUS_LOCKED, ICON, 80, 1, {},)])
+
+        now: float = time.time()
+        if now - self.last_synced > BWCLI_SYNC_TIMEOUT:
+            if self.sync_soon_timer:
+                # wait a bit more
+                GLib.source_remove(self.sync_soon_timer)
+            # wait a bit (10s after last lookup) to not disturb lookups
+            self.sync_soon_timer = GLib.timeout_add_seconds(10, self.sync_timeout)
 
         query = query[len(TRIGGER):].strip()
         if not query:
