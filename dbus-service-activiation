@@ -1,5 +1,9 @@
 I couldn't make dbus activiation for user session, but it is an interesting idea
 
+some info here
+https://develop.kde.org/docs/d-bus/dbus_autostart_services/
+but it should be possible with /etc/dbus-1/services.d/...service too
+
 martinin@HIQGBGL0397 ~/.dbus/services cat mi.secretservice.krunner.service 
 [D-BUS Service]
 Name=mi.secretservice.krunner

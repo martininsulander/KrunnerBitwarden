@@ -73,15 +73,24 @@ class Runner(dbus.service.Object):
         self.wait: Waiting = None
         self.last_synced: float = 0
         self.bwcli: Bwcli = Bwcli()
+        # listen to sleep signal and lock bwcli when triggered
+        system_bus = dbus.SystemBus()
+        system_bus.add_signal_receiver(
+            self.bwcli.lock,
+            'PrepareForSleep',                  # signal
+            'org.freedesktop.login1.Manager',   # interface
+            'org.freedesktop.login1'            # bus
+        )
         log_init.debug('Runner init')
 
-    def run(self):
+    def main_loop(self):
         "Start main loop"
         log_init.info('%s service started', APPNAME)
         GLib.MainLoop().run()
 
     def lock_timeout(self):
         "Lock bwcli - will require a new login"
+        log_init.info('Lock on timeout after %d s without using Krunner', LOCK_TIMEOUT)
         self.bwcli.lock()
 
     def sync_timeout(self):
@@ -219,4 +228,4 @@ for key, value in os.environ.items():
         name = key.split('_', 1)[1]
         logging.getLogger(name).setLevel(value)
 
-Runner().run()
+Runner().main_loop()

@@ -78,7 +78,7 @@ class Bwcli:
                 return True
         return False
 
-    def lock(self) -> None:
+    def lock(self, _arg=None) -> None:
         """Call bwcli logout and clear session"""
         if self.has_session():
             log.info('lock session')
