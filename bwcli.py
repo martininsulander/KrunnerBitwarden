@@ -131,7 +131,8 @@ class Bwcli:
             attributes.add(item["name"])
             if 'uris' in login:
                 for uri in login["uris"]:
-                    attributes.add(uri["uri"])
+                    if uri["uri"]:
+                        attributes.add(uri["uri"])
             for colid in item['collectionIds']:
                 if colid in self.cached_names:
                     colname = self.cached_names[colid]
