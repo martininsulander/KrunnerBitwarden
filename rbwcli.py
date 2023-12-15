@@ -203,7 +203,7 @@ if __name__ == "__main__":
     import sys
 
     logging.basicConfig(level=logging.DEBUG)
-    bw = Bwcli()
+    bw = Rbwcli()
     matches = bw.search(sys.argv[1])
     if matches:
         for item in matches:
