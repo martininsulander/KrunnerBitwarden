@@ -8,18 +8,19 @@ import logging
 from typing import List, Tuple, Dict, Final, Literal, Callable, cast, NamedTuple, Optional
 import json
 import time
+import shutil
 import dbus.service  # type: ignore
 
 from dbus.mainloop.glib import DBusGMainLoop  # type: ignore
 from gi.repository import GLib  # type: ignore
 
 import clipboard
-from bwcli import Bwcli, Entry
+from bwcli import Bwcli
+from rbwcli import Rbwcli
 
 log_init = logging.getLogger('init')
 log_search = logging.getLogger('search')
 log_secret = logging.getLogger('secret')
-
 
 DBusGMainLoop(set_as_default=True)
 
@@ -72,7 +73,12 @@ class Runner(dbus.service.Object):
         self.lock_timer: Optional[int] = None
         self.wait: Waiting = None
         self.last_synced: float = 0
-        self.bwcli: Bwcli = Bwcli()
+        if shutil.which('rbw'):
+            log_init.info('Using rbw cli')
+            self.bwcli: Rbwcli = Rbwcli()
+        else:
+            log_init.info('Using bw cli')
+            self.bwcli: Bwcli = Bwcli()
         # listen to sleep signal and lock bwcli when triggered
         system_bus = dbus.SystemBus()
         system_bus.add_signal_receiver(

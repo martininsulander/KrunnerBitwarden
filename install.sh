@@ -24,6 +24,7 @@ echo "Putting plugin in: $CODE_PATH"
 mkdir -p "$CODE_PATH"
 cp clipboard.py "$CODE_PATH"
 cp bwcli.py "$CODE_PATH"
+cp rbwcli.py "$CODE_PATH"
 cp "$APP" "$CODE_PATH"
 chmod u+x "$CODE_PATH/$APP"
 
