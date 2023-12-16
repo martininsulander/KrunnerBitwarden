@@ -4,7 +4,6 @@ import difflib
 import logging
 import sys
 from subprocess import run
-import subprocess
 import json
 from typing import (
     Iterable,
@@ -18,6 +17,7 @@ from typing import (
 )
 
 log = logging.getLogger("rbwcli")
+
 
 class Entry:
     """Each entry of a search result"""
@@ -132,7 +132,10 @@ class Rbwcli:
         ]
         """
         for item in items:
-            if not "username" in item.get("data"):
+            try:
+                if not "username" in item.get("data"):
+                    continue
+            except:
                 continue
             login_data = item.get("data")
             username = login_data.get("username", "")
