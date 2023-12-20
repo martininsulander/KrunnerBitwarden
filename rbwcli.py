@@ -40,7 +40,7 @@ class Rbwcli:
 
     def login(self):
         "Get session cookie"
-        command = "rbw unlock"
+        command = ["rbw", "unlock"]
         proc = run(args=command, shell=False, capture_output=True)
         if proc.returncode == 0:
             self.__session = True
@@ -79,12 +79,14 @@ class Rbwcli:
     def lock(self, _arg=None) -> None:
         """Call bwcli logout and clear session"""
         log.info("lock session")
+        self.__session = False
         self.__call("lock")
 
     def has_session(self) -> bool:
         result = self.__call("unlocked")
         if result[0] == 0:
             return True
+        self.__session = False
         return False
 
     def search(self, search_term: str) -> "Iterable[Entry]":
